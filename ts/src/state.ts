@@ -25,6 +25,24 @@ export interface AuthRequest extends Request {
   user?: CustomJwtPayload;
 }
 
+export enum market {
+  "sol_usd",
+  "sol_eth",
+  "eth_usd",
+  "eth_sol",
+  "usd_sol",
+  "usd_eth"
+}
+
+export interface Order {
+  action: "BUY" | "SELL";       // Direction
+  type: "LIMIT" | "MARKET";   // Execution method
+  price?: number;
+  qty: number;
+  market: market;
+}
+
+
 export let USER_INDEX = 0;
 
 export const increment_index = () => {
