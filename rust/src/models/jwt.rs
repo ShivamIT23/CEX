@@ -6,3 +6,15 @@ pub struct Claims {
     pub username: String,
     pub exp: usize,
 }
+
+#[derive(serde::Serialize)]
+pub struct SignupReturnType {
+    pub token: String,
+    pub success: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct AssetBalanceType {
+    pub asset: u32,
+    pub success: String,
+}
