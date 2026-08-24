@@ -1,9 +1,7 @@
 mod models;
 
 use models::jwt::{Claims, SignupReturnType};
-use models::user::User;
-
-use models::order::market;
+use models::user::{TokenType, User};
 
 use actix_web::{App, HttpResponse, HttpServer, Responder, get, post, web, web::Json};
 use jsonwebtoken::{EncodingKey, Header, encode};
@@ -20,7 +18,7 @@ struct SignupInput {
 
 #[derive(Serialize, Deserialize)]
 struct Asset {
-    pub asset: market,
+    pub asset: TokenType,
 }
 
 #[get("/")]
@@ -123,17 +121,20 @@ async fn balance_asset(asset: web::Query<Asset>, app_state: web::Data<AppState>)
     let balance = {
         let users = app_state.users.lock().unwrap();
 
-        match users.iter().find(|x| x.id == id) {
-            Some(user) => user[asset],
+        let user = match users.iter().find(|x| x.id == id) {
+            Some(user) => user,
             None => {
-                return HttpResponse::Unauthorized().body("Invalid username or password");
+                return HttpResponse::NotFound().body("User not found");
             }
-        }
+        };
+
+        let balance = user.get_balance(&asset);
+        balance
     };
 
     HttpResponse::Ok().json(AssetBalanceType {
-        asset: 0,
-        success: String::from("Login successful"),
+        asset: balance,
+        success: String::from("Balance retrieved"),
     })
 }
 
@@ -152,9 +153,16 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(users.clone())
             .service(hello)
-            .service(balance_asset)
             .service(sign_up)
             .service(sign_in)
+            .wrap_fn(|req, srv| {
+                println!("Hi from start. You requested: {}", req.path());
+                srv.call(req).map(|res| {
+                    println!("Hi from response");
+                    res
+                })
+            })
+            .service(balance_asset)
     })
     .bind(("127.0.0.1", 8080))?
     .run()

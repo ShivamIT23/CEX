@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
-pub enum market {
+pub enum Market {
     sol_usd,
     sol_eth,
     eth_usd,
@@ -25,5 +25,5 @@ pub struct order {
     pub order_type: order_type,
     pub price: u32,
     pub qty: u32,
-    market: market,
+    market: Market,
 }
