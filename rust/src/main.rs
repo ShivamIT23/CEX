@@ -1,14 +1,20 @@
 mod models;
 
-use models::jwt::{Claims, SignupReturnType};
+use models::jwt::{AssetBalanceType, Claims, SignupReturnType};
 use models::user::{TokenType, User};
 
-use actix_web::{App, HttpResponse, HttpServer, Responder, get, post, web, web::Json};
-use jsonwebtoken::{EncodingKey, Header, encode};
+use actix_web::{
+    App, HttpMessage, HttpResponse, HttpServer, Responder,
+    dev::{Service, ServiceResponse},
+    get,
+    http::header,
+    post, web,
+    web::Json,
+};
+use futures_util::future::LocalBoxFuture;
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-
-use crate::models::jwt::AssetBalanceType;
 
 #[derive(Serialize, Deserialize)]
 struct SignupInput {
@@ -113,15 +119,20 @@ async fn sign_in(req_body: Json<SignupInput>, app_state: web::Data<AppState>) ->
 }
 
 #[get("/balance")]
-async fn balance_asset(asset: web::Query<Asset>, app_state: web::Data<AppState>) -> impl Responder {
+async fn balance_asset(
+    claims: web::ReqData<Claims>,
+    asset: web::Query<Asset>,
+    app_state: web::Data<AppState>,
+) -> impl Responder {
     let Asset { asset } = asset.into_inner();
-    let secret = std::env::var("JWT_SECRET").unwrap_or(String::from("2025_secret"));
     println!("{:?}", asset);
+
+    let user_id = claims.id;
 
     let balance = {
         let users = app_state.users.lock().unwrap();
 
-        let user = match users.iter().find(|x| x.id == id) {
+        let user = match users.iter().find(|x| x.id == user_id) {
             Some(user) => user,
             None => {
                 return HttpResponse::NotFound().body("User not found");
@@ -155,14 +166,54 @@ async fn main() -> std::io::Result<()> {
             .service(hello)
             .service(sign_up)
             .service(sign_in)
-            .wrap_fn(|req, srv| {
-                println!("Hi from start. You requested: {}", req.path());
-                srv.call(req).map(|res| {
-                    println!("Hi from response");
-                    res
-                })
-            })
-            .service(balance_asset)
+            .service(
+                web::scope("")
+                    .wrap_fn(|req, srv| {
+                        let secret = std::env::var("JWT_SECRET")
+                            .unwrap_or_else(|_| String::from("2025_secret"));
+
+                        let auth_header = req
+                            .headers()
+                            .get(header::AUTHORIZATION)
+                            .and_then(|h| h.to_str().ok());
+
+                        let token_str = match auth_header.and_then(|h| h.strip_prefix("Bearer ")) {
+                            Some(token) => token,
+                            None => {
+                                let res = HttpResponse::Unauthorized()
+                                    .body("Missing or invalid Authorization header");
+                                let srv_res = ServiceResponse::new(req.clone(), res);
+                                return Box::pin(async move { Ok(srv_res) })
+                                    as LocalBoxFuture<'static, Result<_, _>>;
+                            }
+                        };
+
+                        let token_data = match decode::<Claims>(
+                            token_str,
+                            &DecodingKey::from_secret(secret.as_bytes()),
+                            &Validation::default(),
+                        ) {
+                            Ok(data) => data,
+                            Err(_) => {
+                                let (req, _payload) = req.into_parts();
+                                let res =
+                                    HttpResponse::Unauthorized().body("Invalid or expired token");
+                                return Box::pin(async move { Ok(req.into_response(res)) })
+                                    as LocalBoxFuture<'static, Result<_, _>>;
+                            }
+                        };
+
+                        // Store decoded claims in request extensions
+                        req.extensions_mut().insert(token_data.claims);
+
+                        let fut = srv.call(req);
+                        Box::pin(async move {
+                            let res = fut.await?;
+                            Ok(res)
+                        })
+                    })
+                    .service(balance_asset), // Add any other protected services here
+            )
     })
     .bind(("127.0.0.1", 8080))?
     .run()
